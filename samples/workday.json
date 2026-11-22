@@ -1,0 +1,14 @@
+{
+  "source": "chengchuan",
+  "batches": [
+    {"id": "early", "observations": [["signal", "v1", "4142"], ["reference", "v1", "4344"]]},
+    {"id": "correction", "observations": [["signal", "v2", "4178"], ["signal", "v3", "417821"]]}
+  ],
+  "packs": [
+    {"id": "P", "entries": [{"revision": ["signal", "v1"]}, {"revision": ["reference", "v1"]}]},
+    {"id": "Q", "entries": [{"revision": ["signal", "v2"], "base": ["P", 0], "prefix": 1}]},
+    {"id": "R", "entries": [{"revision": ["signal", "v3"], "base": ["Q", 0], "prefix": 2}]}
+  ],
+  "snapshots": {"early-reference": [["P", 1]], "shift-signal": [["R", 0]]},
+  "retire": "P"
+}
