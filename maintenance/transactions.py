@@ -9,6 +9,7 @@ from maintenance.receipts import create_retirement_receipt_schema
 from maintenance.replacement import create_replacement_schema
 from packing.store import create_pack_schema
 from snapshot.catalog import create_snapshot_schema
+from snapshot.contributions import create_contribution_schema
 from snapshot.receipts import create_publication_receipt_schema
 
 
@@ -48,6 +49,7 @@ def initialize_database(db: sqlite3.Connection) -> None:
         create_activity_schema(db)
         create_pack_schema(db)
         create_snapshot_schema(db)
+        create_contribution_schema(db)
         create_publication_receipt_schema(db)
         create_replacement_schema(db)
         create_retirement_receipt_schema(db)

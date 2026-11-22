@@ -29,6 +29,29 @@ class AuditResult:
         return sum(row.byte_length for row in self.rows)
 
 
+@dataclass(frozen=True, slots=True)
+class ContributionRow:
+    position: int
+    address: PackAddress
+    revision: RevisionKey
+    value: bytes
+    contributions: tuple[tuple[int, int, RevisionKey, int, int], ...]
+
+    @property
+    def byte_length(self) -> int:
+        return len(self.value)
+
+
+@dataclass(frozen=True, slots=True)
+class ContributionResult:
+    snapshot_id: str
+    rows: tuple[ContributionRow, ...]
+
+    @property
+    def total_bytes(self) -> int:
+        return sum(row.byte_length for row in self.rows)
+
+
 def assemble_audit(manifest: SnapshotManifest, values: Iterable[RestoredEntry]) -> AuditResult:
     rows = tuple(
         AuditRow(position, pinned.address, restored.revision, restored.value)

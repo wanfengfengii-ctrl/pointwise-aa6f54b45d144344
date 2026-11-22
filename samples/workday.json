@@ -10,5 +10,6 @@
     {"id": "R", "entries": [{"revision": ["signal", "v3"], "base": ["Q", 0], "prefix": 2}]}
   ],
   "snapshots": {"early-reference": [["P", 1]], "shift-signal": [["R", 0]]},
+  "contribution_snapshot": {"id": "shift-provenance", "addresses": [["R", 0]]},
   "retire": "P"
 }

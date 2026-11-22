@@ -13,9 +13,9 @@ from maintenance.transactions import initialize_database, open_database
 from packing.addresses import PackAddress
 from packing.seal import SealSelection, seal_pack
 from packing.store import read_pack_bytes
-from reading.open import SnapshotReadError, read_snapshot
+from reading.open import SnapshotReadError, read_contributions, read_snapshot
 from snapshot.catalog import get_manifest_bytes
-from snapshot.publish import publish_snapshot
+from snapshot.publish import publish_snapshot, publish_with_contributions
 
 
 _SAMPLE = Path(__file__).resolve().parent / 'samples' / 'workday.json'
@@ -34,6 +34,15 @@ def _summarize(audit):
              row.value.hex(), row.byte_length] for row in audit.rows]
 
 
+def _summarize_contributions(result):
+    return [[
+        row.revision.source, row.revision.record, row.revision.revision,
+        row.value.hex(), row.byte_length,
+        [[start, end, key.source, key.record, key.revision, source_start, source_end]
+         for start, end, key, source_start, source_end in row.contributions],
+    ] for row in result.rows]
+
+
 def run_workday(path: Path, sample: dict) -> int:
     source = sample['source']
     early, correction = (_submit(source, batch) for batch in sample['batches'])
@@ -42,6 +51,13 @@ def run_workday(path: Path, sample: dict) -> int:
         'early-reference': [['chengchuan', 'reference', 'v1', '4344', 2]],
         'shift-signal': [['chengchuan', 'signal', 'v3', '417821', 3]],
     }
+    contribution_sample = sample['contribution_snapshot']
+    contribution_expected = [[
+        'chengchuan', 'signal', 'v3', '417821', 3,
+        [[0, 1, 'chengchuan', 'signal', 'v1', 0, 1],
+         [1, 2, 'chengchuan', 'signal', 'v2', 1, 2],
+         [2, 3, 'chengchuan', 'signal', 'v3', 2, 3]],
+    ]]
     with closing(open_database(path)) as db:
         initialize_database(db)
         accepted = accept_batch(db, early)
@@ -69,7 +85,15 @@ def run_workday(path: Path, sample: dict) -> int:
         before = {name: _summarize(read_snapshot(db, manifest)) for name, manifest in manifests.items()}
         if before != expected:
             raise AssertionError(f'unexpected pre-retirement audit {before!r}')
+        contribution_manifest = publish_with_contributions(
+            db, contribution_sample['id'],
+            tuple(PackAddress(*ref) for ref in contribution_sample['addresses']),
+        ).manifest
+        before_contributions = _summarize_contributions(read_contributions(db, contribution_manifest))
+        if before_contributions != contribution_expected:
+            raise AssertionError(f'unexpected pre-retirement provenance {before_contributions!r}')
         print('交班读回', json.dumps(before, ensure_ascii=False))
+        print('贡献读回', json.dumps(before_contributions, ensure_ascii=False))
         original = read_pack_bytes(db, target)
         kept = {pack: read_pack_bytes(db, pack) for pack in list_active_packs(db) if pack != target}
         receipt = retire_pack(db, target)
@@ -82,31 +106,41 @@ def run_workday(path: Path, sample: dict) -> int:
                 actual[name] = _summarize(read_snapshot(db, manifest))
             except SnapshotReadError as exc:
                 actual[name] = {'read_error': str(exc)}
+        actual_contributions = _summarize_contributions(read_contributions(db, contribution_manifest))
         downstream_actual = {
             'active_packs': list(list_active_packs(db)),
             'payload_removed': read_pack_bytes(db, target) is None,
             'other_pack_bytes_fixed': all(read_pack_bytes(db, pack) == data for pack, data in kept.items()),
             'manifests_fixed': all(get_manifest_bytes(db, name) == data for name, data in manifests.items()),
+            'contribution_manifest_fixed': get_manifest_bytes(
+                db, contribution_sample['id']) == contribution_manifest,
             'receipt_fixed': load_retirement_receipt(db, target) == receipt
                              and receipt.removed_bytes == len(original),
         }
     downstream_expected = {
         'active_packs': ['Q', 'R'], 'payload_removed': True, 'other_pack_bytes_fixed': True,
-        'manifests_fixed': True, 'receipt_fixed': True,
+        'manifests_fixed': True, 'contribution_manifest_fixed': True, 'receipt_fixed': True,
     }
-    if actual != expected or downstream_actual != downstream_expected:
-        details = {'actual': actual, 'expected': expected, 'downstream': downstream_actual}
+    if actual != expected or actual_contributions != contribution_expected \
+            or downstream_actual != downstream_expected:
+        details = {'actual': actual, 'expected': expected,
+                   'contribution_actual': actual_contributions,
+                   'contribution_expected': contribution_expected, 'downstream': downstream_actual}
         print('PACK_RETIRE_SNAPSHOT_MISMATCH', json.dumps(details, sort_keys=True), file=sys.stderr)
         return 1
     print('重开后读回', json.dumps(actual, ensure_ascii=False))
+    print('重开后贡献读回', json.dumps(actual_contributions, ensure_ascii=False))
     evidence = {
         'case_id': 'V7', 'input': sample, 'expected': expected, 'actual': actual,
+        'contribution_expected': contribution_expected, 'contribution_actual': actual_contributions,
         'downstream_expected': downstream_expected, 'downstream_actual': downstream_actual,
-        'code_paths': ['packing/delta.py', 'packing/chains.py', 'snapshot/publish.py',
-                       'maintenance/dependencies.py', 'maintenance/retire.py', 'reading/open.py',
-                       'reading/resolve.py'],
+        'code_paths': ['packing/delta.py', 'packing/chains.py', 'reading/provenance.py',
+                       'snapshot/publish.py', 'snapshot/contributions.py',
+                       'maintenance/dependencies.py', 'maintenance/retire.py',
+                       'reading/open.py', 'reading/resolve.py'],
         'oracle': 'P:1 is CD. AB[:1] with x gives Ax, then Ax[:2] with ! gives Ax!. '
-                  'Compare the kept payloads and fixed manifests byte for byte across the reopen.',
+                  'The provenance row splits Ax! into P:0[0:1] + Q:0[1:2] + R:0[2:3]. '
+                  'Compare the kept payloads, fixed manifests, and provenance spans across the reopen.',
     }
     print('POINTWISE_SCENARIO', json.dumps(evidence, ensure_ascii=False, sort_keys=True))
     return 0

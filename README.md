@@ -21,7 +21,9 @@ python3 -B workday.py
 | 接纳批次 | `ingest.batches.accept_batch(db, BatchSubmission(source, batch_id, observations))` | `Observation(RevisionKey(source, record, revision), value)` 的有序序列。返回原序修订身份和本次新增数。 |
 | 封存包 | `packing.seal.seal_pack(db, pack_id, selections)` | 全值用 `SealSelection(revision)`，差量用 `SealSelection(revision, PackAddress(pack_id, slot), prefix)`。返回包位序列和封存字节数。 |
 | 发布快照 | `snapshot.publish.publish_snapshot(db, snapshot_id, addresses)` | 按给定地址序列返回原清单字节和发布回执。同号同序可重领。 |
+| 发布带贡献快照 | `snapshot.publish.publish_with_contributions(db, snapshot_id, addresses)` | 同 `publish_snapshot`，另存每段字节的实际来源，一并提交清单与回执。 |
 | 核账 | `reading.open.read_snapshot(db, selector)` | `selector` 为快照号或保存的原始清单 `bytes`。返回逐位置的包位、修订身份、原始字节和长度。`open_snapshot` 可单独取得登记的清单结构。 |
+| 贡献核账 | `reading.open.read_contributions(db, selector)` | 同选择器，每行另带 `contributions`：`(out_start, out_end, source_revision, source_start, source_end)` 区间元组。普通快照抛 `MissingContributionEvidence`。 |
 | 退役 | `maintenance.retire.retire_pack(db, pack_id)` | 退役一个活动包，返回持久回执，含移除的封存字节数及保全的包位数。可用 `maintenance.receipts.load_retirement_receipt` 重领，`maintenance.active.list_active_packs` 核对活动包。 |
 
 标识使用 1–128 个 ASCII 字符，首字符为字母或数字，后续可用字母、数字、点、连字符和下划线。槽号从零开始，由选择顺序分配，包号和槽号共同标识地址。修订身份包括来源号。清单与批次可保留重复位置，空序列有效，空字节是有效的观测值。值必须以 `bytes` 传入。
@@ -31,6 +33,8 @@ python3 -B workday.py
 差量以已经封存且当前可完整还原的基值为基础。前缀长度 p 必须满足 `0 <= p <= len(base)`，目标的前 p 个字节也须相同。包保存基址、前缀长度和目标后缀，还原逐层计算 `base[:p] + suffix`。零前缀仍需可解析的基址。选择中的未知修订、非法地址、缺失基址或无效前缀引发 `SealError`，失败的包无载荷也无活动资格。包号一经分配便保留。
 
 发布前逐项核实包位可还原。同号异序、未知地址或不完整证据引发 `PublicationError`。读回使用一个数据库读视图，并核对固定清单的修订身份。未知快照、原清单不符、包损坏或基链不完整引发 `SnapshotReadError`，调用者只会在全部位置成功后收到结果。发布回执包含清单摘要和逐位置累计的记录数与字节数。
+
+带贡献快照把每段输出字节归给实际来源修订：全值字节来自本级修订，差量前缀继承封存基底在前缀内的贡献，后缀归本级修订且源偏移从目标前缀长度算起。相同字节可有不同来源，相邻且同源连续的区间合并，空值对应空区间。发布与读取均整单成功或失败，任一位置证据缺失或损坏即整次拒绝。已退役 V1 替代值保存了字节却可能缺少来源；新发布若实际继承非空未知区间则整单失败，未知区间被裁尽后可发布，零前缀也须通过原基链校验。快照号由两种发布模式共享，任一方向混号报错；同模式同号同序可重领。贡献快照受普通退役保全，也能用普通接口读回字节。
 
 退役保全所有已发布清单的直接和间接依赖，移除目标包在活动库中的整份封存载荷。其他封存包及原清单字节保持原样。替代目录、替代载荷、退役标记和回执一起提交。未知或已退役的包号以及退役事务失败引发 `RetirementError`。核账以已发快照为保全边界，未被已发清单保全的包位随底层载荷退出可能失去可读性。
 
